@@ -8,7 +8,7 @@
 |---|---|
 | **Nome do grupo** | Valdemir Pinheiro |
 | **Modalidade** | Individual |
-| **Data de entrega** | `<PREENCHER — DD/MM/AAAA>` |
+| **Data de entrega** | 15/09/2026 |
 
 ## 2. Participantes
 
@@ -34,7 +34,7 @@ O **README.md do repositório de orquestração** (`fcg-orchestration`) é o gui
 
 ## 5. Link do vídeo
 
-- `<PREENCHER — https://youtu.be/...>`
+- <https://youtu.be/T9hVy1LyNKw>
 
 ---
 
@@ -193,7 +193,101 @@ fcg-notifications-function/     fcg-orchestration/
 
 ---
 
-## 10. Referências
+## 10. Rastreabilidade — requisito da PDF → implementação
+
+Cada exigência da Fase 3 mapeada para o artefato correspondente, com o caminho exato no repositório.
+
+### Funcionalidade 1 — API Gateway
+
+| Exigência | Onde está | Evidência |
+|---|---|---|
+| API Gateway como porta de entrada única | `fcg-orchestration/kong/kong.yml`<br>`fcg-orchestration/k8s/gateway/03-kong.yaml` | Kong 3.7 DB-less, porta 8000 (compose) / 30000 (k8s) |
+| Ferramenta recomendada: Kong | idem | `image: kong:3.7` |
+| Receber todas as requisições externas | `docker-compose.yml` | Apenas Kong tem porta pública no desenho de produção |
+| Validar token JWT | `kong.yml` → plugin `jwt` | Consumer `fcg-platform`, `key: FCG.Gateway`, HS256 |
+| Roteamento para UsersAPI e CatalogAPI | `kong.yml` → `services` | 2 services, 5 routes |
+| Configuração versionada no repo de orquestração | este repositório | `kong/kong.yml` em Git |
+
+### Funcionalidade 2 — Serverless
+
+| Exigência | Onde está | Evidência |
+|---|---|---|
+| Refatorar NotificationsAPI para Função Serverless | `fcg-notifications-function/src/.../NotificationFunctions.cs` | Azure Functions v4, .NET 8 isolated |
+| Acionada por mensagens da fila | idem | `[RabbitMQTrigger("notifications-user-created")]` e `[RabbitMQTrigger("notifications-payment-processed")]` |
+| Substituir o container contínuo | — | Não há serviço `notifications-api` no `docker-compose.yml`; a função escala a zero |
+| Código em repositório próprio | <https://github.com/ValdemirPinheiro/fcg-notifications-function> | repositório dedicado |
+| Infraestrutura como código | `fcg-notifications-function/infra/main.bicep` | Bicep: Storage, App Insights, Plano Y1 Consumption, Function App |
+
+### Funcionalidade 3 — Observabilidade (Opção A)
+
+| Exigência | Onde está | Evidência |
+|---|---|---|
+| Escolha documentada no README da orquestração | `fcg-orchestration/README.md` | Seção "Stack de Observabilidade escolhida" com justificativa |
+| Instrumentar UsersAPI e CatalogAPI | `Program.cs` de ambos | `app.UseHttpMetrics()` + `app.MapMetrics()` (prometheus-net) |
+| Expor métricas no formato Prometheus | idem | endpoint `/metrics` |
+| Dashboard: **latência de requisições** | `grafana/dashboards/fcg-overview.json` | painel "Latência por serviço (p50/p95/p99)" |
+| Dashboard: **contagem de requisições (total e por status code)** | idem | painéis "Requisições por status code HTTP" e "Requisições por serviço" |
+| Dashboard: **taxa de erros** | idem | painel "Taxa de Erros (5xx)" com limiares coloridos |
+| Implantação via manifestos Kubernetes | `k8s/observability/04-prometheus.yaml` e `05-grafana.yaml` | exigência específica da Opção A |
+
+> Instrumentamos também o **PaymentsAPI** e o próprio **Kong** (plugin `prometheus`), acima do mínimo exigido.
+
+### Funcionalidade 4 — Persistência Poliglota e Cache
+
+| Exigência | Onde está | Evidência |
+|---|---|---|
+| NoSQL obrigatório: MongoDB | `fcg-catalog-api/src/.../Infrastructure/MongoStore.cs`<br>`fcg-payments-api/src/.../Infrastructure/PaymentGatewaySimulator.cs` | 4 coleções |
+| Driver oficial `MongoDB.Driver` | `.csproj` de ambos | versão 2.28.0 |
+| Cenário de uso: dados flexíveis / alta volumetria | `game_reviews` (tags livres), `event_logs`, `library_items`, `payments` | schema flexível e append-only |
+| Cache distribuído obrigatório: Redis | `fcg-catalog-api/src/.../Infrastructure/CacheService.cs` | padrão cache-aside |
+| Biblioteca `IDistributedCache` | `.csproj` | `Microsoft.Extensions.Caching.StackExchangeRedis` |
+| Cenário: consultas onerosas | `games:list:*`, `games:item:{id}`, `library:{userId}` | TTL de 1 a 5 min com invalidação em escrita |
+
+### Base da Fase 2 (fundação construída nesta entrega)
+
+| Exigência | Evidência |
+|---|---|
+| Quatro microsserviços distintos | UsersAPI, CatalogAPI, PaymentsAPI, NotificationsFunction |
+| Cada um em repositório Git próprio | 5 repositórios independentes no GitHub |
+| Mensageria (RabbitMQ) | MassTransit 8.3 + RabbitMQ 3.13 |
+| Fluxo de cadastro (`UserCreatedEvent`) | UsersAPI publica → Function consome |
+| Fluxo de compra (`OrderPlacedEvent` → `PaymentProcessedEvent`) | CatalogAPI → PaymentsAPI → CatalogAPI + Function |
+| Dockerfiles multi-stage | os 3 microsserviços, com usuário não-root |
+| `docker-compose up` sobe tudo | `fcg-orchestration/docker-compose.yml` |
+| Manifestos em `/k8s` na raiz de cada repo | `fcg-*/k8s/` |
+| Deployments (não Pods isolados) | todos os workloads usam `kind: Deployment` |
+| ConfigMaps para config não sensível | `*/k8s/configmap.yaml` |
+| Secrets para dados sensíveis | `*/k8s/secret.yaml` |
+| Comunicação por nome de Service | `http://users-api:80`, `http://catalog-api:80` |
+
+---
+
+## 11. Validação executada
+
+O ambiente foi validado end-to-end com o script `scripts/smoke-test.ps1`, que exercita todos os requisitos:
+
+| # | Cenário | Resultado |
+|---|---|---|
+| 1 | Cadastro de usuário via Gateway | 201 — `UserCreatedEvent` publicado |
+| 2 | Validação de senha fraca | 400 rejeitado |
+| 3 | Login e emissão de JWT | 200 com token válido |
+| 4 | Rota protegida sem token | **401 barrado pelo Kong** |
+| 5 | Catálogo — 1ª chamada (cache miss) | 3999 ms (PostgreSQL) |
+| 6 | Catálogo — 2ª chamada (cache hit) | **4 ms (Redis) — ~1000x mais rápido** |
+| 7 | Compra aprovada (R$ 29,90) | Pipeline assíncrono completo; jogo na biblioteca |
+| 8 | Compra rejeitada (R$ 249,90 > limite) | Jogo **não** entrou na biblioteca |
+| 9 | Avaliação com tags livres | Documento gravado no MongoDB |
+| 10 | Cadastro de jogo como Admin | 201 — autorização por role funcionando |
+
+**Função Serverless** — três e-mails processados a partir das filas, com tempo de execução entre 96 ms e 140 ms:
+
+- E-mail de boas-vindas (`UserCreatedEvent`)
+- E-mail de confirmação de compra (`PaymentProcessedEvent` / Approved)
+- E-mail de recusa (`PaymentProcessedEvent` / Rejected, com o motivo)
+
+---
+
+## 12. Referências
 
 - [Kong Gateway — Declarative Configuration](https://docs.konghq.com/gateway/latest/production/deployment-topologies/db-less-and-declarative-config/)
 - [Azure Functions — RabbitMQ bindings](https://learn.microsoft.com/azure/azure-functions/functions-bindings-rabbitmq)
