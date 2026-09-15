@@ -1,0 +1,282 @@
+# =============================================================================
+# FCG — Tech Challenge Fase 3
+# Sobe o ambiente completo: infraestrutura + microsserviços + gateway + observabilidade
+#
+#   docker compose up -d --build
+#
+# A NotificationsFunction roda separadamente com `func start` (Azure Functions
+# Core Tools) — ela é serverless e não é um container por definição.
+# =============================================================================
+
+name: fcg-fase3
+
+services:
+
+  # ═══════════════════════════════ INFRAESTRUTURA ═══════════════════════════
+
+  postgres-users:
+    image: postgres:16-alpine
+    container_name: fcg-postgres-users
+    environment:
+      POSTGRES_USER: fcg
+      POSTGRES_PASSWORD: fcg123
+      POSTGRES_DB: fcg_users
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata-users:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fcg -d fcg_users"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [fcg-net]
+
+  postgres-catalog:
+    image: postgres:16-alpine
+    container_name: fcg-postgres-catalog
+    environment:
+      POSTGRES_USER: fcg
+      POSTGRES_PASSWORD: fcg123
+      POSTGRES_DB: fcg_catalog
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata-catalog:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fcg -d fcg_catalog"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [fcg-net]
+
+  mongo:
+    image: mongo:7
+    container_name: fcg-mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodata:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [fcg-net]
+
+  redis:
+    image: redis:7-alpine
+    container_name: fcg-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [fcg-net]
+
+  # Emulador de Azure Storage — requisito do runtime das Azure Functions
+  # (o host usa para locks de singleton e coordenação interna dos triggers)
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:latest
+    container_name: fcg-azurite
+    command: ["azurite", "--blobHost", "0.0.0.0", "--queueHost", "0.0.0.0", "--tableHost", "0.0.0.0", "--location", "/data"]
+    ports:
+      - "10000:10000"   # Blob
+      - "10001:10001"   # Queue
+      - "10002:10002"   # Table
+    volumes:
+      - azuritedata:/data
+    networks: [fcg-net]
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: fcg-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    ports:
+      - "5672:5672"      # AMQP
+      - "15672:15672"    # UI de gerenciamento
+    volumes:
+      # Pré-provisiona exchanges, filas e bindings que a Azure Function consome
+      - ./rabbitmq/definitions.json:/etc/rabbitmq/definitions.json:ro
+      - ./rabbitmq/rabbitmq.conf:/etc/rabbitmq/conf.d/10-defs.conf:ro
+      - rabbitdata:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+    networks: [fcg-net]
+
+  # ═══════════════════════════════ MICROSSERVIÇOS ═══════════════════════════
+
+  users-api:
+    build:
+      context: ../fcg-users-api
+      dockerfile: Dockerfile
+    image: fcg/users-api:latest
+    container_name: fcg-users-api
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__Postgres: "Host=postgres-users;Port=5432;Database=fcg_users;Username=fcg;Password=fcg123"
+      RabbitMq__Host: rabbitmq
+      RabbitMq__Username: guest
+      RabbitMq__Password: guest
+      Jwt__Issuer: FCG.Gateway
+      Jwt__Audience: FCG.Clients
+      Jwt__SecretKey: fcg-fase3-chave-secreta-compartilhada-entre-servicos-e-kong-1234567890
+      Jwt__ExpirationMinutes: "120"
+    ports:
+      - "8081:8080"
+    depends_on:
+      postgres-users:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks: [fcg-net]
+
+  catalog-api:
+    build:
+      context: ../fcg-catalog-api
+      dockerfile: Dockerfile
+    image: fcg/catalog-api:latest
+    container_name: fcg-catalog-api
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__Postgres: "Host=postgres-catalog;Port=5432;Database=fcg_catalog;Username=fcg;Password=fcg123"
+      ConnectionStrings__Redis: "redis:6379"
+      Mongo__ConnectionString: "mongodb://mongo:27017"
+      Mongo__Database: fcg_catalog
+      RabbitMq__Host: rabbitmq
+      RabbitMq__Username: guest
+      RabbitMq__Password: guest
+      Jwt__Issuer: FCG.Gateway
+      Jwt__Audience: FCG.Clients
+      Jwt__SecretKey: fcg-fase3-chave-secreta-compartilhada-entre-servicos-e-kong-1234567890
+    ports:
+      - "8082:8080"
+    depends_on:
+      postgres-catalog:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks: [fcg-net]
+
+  payments-api:
+    build:
+      context: ../fcg-payments-api
+      dockerfile: Dockerfile
+    image: fcg/payments-api:latest
+    container_name: fcg-payments-api
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://+:8080
+      Mongo__ConnectionString: "mongodb://mongo:27017"
+      Mongo__Database: fcg_payments
+      RabbitMq__Host: rabbitmq
+      RabbitMq__Username: guest
+      RabbitMq__Password: guest
+      Payments__ApprovalLimit: "200"
+      Payments__SimulatedLatencyMs: "1500"
+    ports:
+      - "8083:8080"
+    depends_on:
+      mongo:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks: [fcg-net]
+
+  # ══════════════════════════════ API GATEWAY ═══════════════════════════════
+
+  kong:
+    image: kong:3.7
+    container_name: fcg-kong
+    environment:
+      KONG_DATABASE: "off"                       # modo DB-less (declarativo)
+      KONG_DECLARATIVE_CONFIG: /kong/kong.yml
+      KONG_PROXY_ACCESS_LOG: /dev/stdout
+      KONG_ADMIN_ACCESS_LOG: /dev/stdout
+      KONG_PROXY_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_LISTEN: 0.0.0.0:8001
+      KONG_PLUGINS: bundled
+    volumes:
+      - ./kong/kong.yml:/kong/kong.yml:ro
+    ports:
+      - "8000:8000"      # ← PORTA DE ENTRADA ÚNICA DO SISTEMA
+      - "8001:8001"      # Admin API
+    depends_on:
+      - users-api
+      - catalog-api
+    healthcheck:
+      test: ["CMD", "kong", "health"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+    networks: [fcg-net]
+
+  # ═══════════════════════════ OBSERVABILIDADE ══════════════════════════════
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: fcg-prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=7d"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - promdata:/prometheus
+    ports:
+      - "9090:9090"
+    depends_on:
+      - users-api
+      - catalog-api
+      - payments-api
+    networks: [fcg-net]
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: fcg-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafanadata:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    networks: [fcg-net]
+
+networks:
+  fcg-net:
+    driver: bridge
+
+volumes:
+  pgdata-users:
+  pgdata-catalog:
+  mongodata:
+  redisdata:
+  rabbitdata:
+  azuritedata:
+  promdata:
+  grafanadata:

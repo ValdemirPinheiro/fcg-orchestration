@@ -1,0 +1,113 @@
+# =============================================================================
+# RabbitMQ com exchanges, filas e bindings pré-provisionados via ConfigMap
+# =============================================================================
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: rabbitmq-credentials
+  namespace: fcg
+type: Opaque
+stringData:
+  RABBITMQ_DEFAULT_USER: guest
+  RABBITMQ_DEFAULT_PASS: guest
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rabbitmq-definitions
+  namespace: fcg
+data:
+  rabbitmq.conf: |
+    load_definitions = /etc/rabbitmq/definitions.json
+  definitions.json: |
+    {
+      "rabbit_version": "3.13.0",
+      "users": [
+        { "name": "guest", "password": "guest", "tags": ["administrator"] }
+      ],
+      "vhosts": [{ "name": "/" }],
+      "permissions": [
+        { "user": "guest", "vhost": "/", "configure": ".*", "write": ".*", "read": ".*" }
+      ],
+      "exchanges": [
+        { "name": "FCG.Contracts:UserCreatedEvent", "vhost": "/", "type": "fanout", "durable": true, "auto_delete": false, "arguments": {} },
+        { "name": "FCG.Contracts:PaymentProcessedEvent", "vhost": "/", "type": "fanout", "durable": true, "auto_delete": false, "arguments": {} }
+      ],
+      "queues": [
+        { "name": "notifications-user-created", "vhost": "/", "durable": true, "auto_delete": false, "arguments": {} },
+        { "name": "notifications-payment-processed", "vhost": "/", "durable": true, "auto_delete": false, "arguments": {} }
+      ],
+      "bindings": [
+        { "source": "FCG.Contracts:UserCreatedEvent", "vhost": "/", "destination": "notifications-user-created", "destination_type": "queue", "routing_key": "", "arguments": {} },
+        { "source": "FCG.Contracts:PaymentProcessedEvent", "vhost": "/", "destination": "notifications-payment-processed", "destination_type": "queue", "routing_key": "", "arguments": {} }
+      ],
+      "policies": [], "parameters": [], "global_parameters": [], "topic_permissions": []
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rabbitmq
+  namespace: fcg
+  labels:
+    app: rabbitmq
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rabbitmq
+  template:
+    metadata:
+      labels:
+        app: rabbitmq
+    spec:
+      containers:
+        - name: rabbitmq
+          image: rabbitmq:3.13-management-alpine
+          ports:
+            - name: amqp
+              containerPort: 5672
+            - name: management
+              containerPort: 15672
+          envFrom:
+            - secretRef:
+                name: rabbitmq-credentials
+          volumeMounts:
+            - name: definitions
+              mountPath: /etc/rabbitmq/definitions.json
+              subPath: definitions.json
+            - name: definitions
+              mountPath: /etc/rabbitmq/conf.d/10-defs.conf
+              subPath: rabbitmq.conf
+          resources:
+            requests: { memory: "256Mi", cpu: "100m" }
+            limits:   { memory: "768Mi", cpu: "500m" }
+          readinessProbe:
+            exec:
+              command: ["rabbitmq-diagnostics", "-q", "ping"]
+            initialDelaySeconds: 25
+            periodSeconds: 15
+      volumes:
+        - name: definitions
+          configMap:
+            name: rabbitmq-definitions
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rabbitmq
+  namespace: fcg
+  labels:
+    app: rabbitmq
+spec:
+  type: ClusterIP
+  selector:
+    app: rabbitmq
+  ports:
+    - name: amqp
+      port: 5672
+      targetPort: 5672
+    - name: management
+      port: 15672
+      targetPort: 15672

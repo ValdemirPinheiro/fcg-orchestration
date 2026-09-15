@@ -1,0 +1,131 @@
+# =============================================================================
+# Kong API Gateway — configuração declarativa (DB-less)
+# Ponto de entrada ÚNICO do sistema FCG.
+# Responsabilidades (conforme PDF da Fase 3):
+#   1. Receber todas as requisições externas
+#   2. Validar token JWT
+#   3. Rotear para UsersAPI e CatalogAPI
+# =============================================================================
+_format_version: "3.0"
+_transform: true
+
+services:
+  # ------------------------------------------------------------- UsersAPI ---
+  - name: users-api
+    url: http://users-api:8080
+    retries: 3
+    connect_timeout: 5000
+    read_timeout: 30000
+    write_timeout: 30000
+    routes:
+      # Rotas PÚBLICAS: login e cadastro não podem exigir token
+      - name: users-auth-public
+        paths:
+          - /api/auth
+        strip_path: false
+        methods: [POST, OPTIONS]
+
+      # Rotas PROTEGIDAS: exigem JWT válido
+      - name: users-admin-protected
+        paths:
+          - /api/users
+        strip_path: false
+        plugins:
+          - name: jwt
+            config:
+              claims_to_verify:
+                - exp
+              key_claim_name: iss
+              secret_is_base64: false
+
+  # ----------------------------------------------------------- CatalogAPI ---
+  - name: catalog-api
+    url: http://catalog-api:8080
+    retries: 3
+    connect_timeout: 5000
+    read_timeout: 30000
+    write_timeout: 30000
+    routes:
+      # Vitrine pública: listar e detalhar jogos, ler avaliações (somente GET)
+      - name: catalog-public
+        paths:
+          - /api/games
+        strip_path: false
+        methods: [GET, OPTIONS]
+        regex_priority: 100
+
+      # Escrita no catálogo, compra e avaliações: exigem JWT
+      - name: catalog-protected
+        paths:
+          - /api/games
+        strip_path: false
+        methods: [POST, PUT, DELETE, PATCH]
+        regex_priority: 50
+        plugins:
+          - name: jwt
+            config:
+              claims_to_verify:
+                - exp
+              key_claim_name: iss
+              secret_is_base64: false
+
+      # Biblioteca do usuário: sempre protegida
+      - name: catalog-library-protected
+        paths:
+          - /api/library
+        strip_path: false
+        plugins:
+          - name: jwt
+            config:
+              claims_to_verify:
+                - exp
+              key_claim_name: iss
+              secret_is_base64: false
+
+# -----------------------------------------------------------------------------
+# Consumer + credencial JWT
+# A 'key' precisa ser idêntica à claim 'iss' emitida pelo UsersAPI (FCG.Gateway)
+# e o 'secret' é a mesma chave HMAC usada para assinar o token.
+# -----------------------------------------------------------------------------
+consumers:
+  - username: fcg-platform
+    jwt_secrets:
+      - key: FCG.Gateway
+        algorithm: HS256
+        secret: fcg-fase3-chave-secreta-compartilhada-entre-servicos-e-kong-1234567890
+
+# -----------------------------------------------------------------------------
+# Plugins globais
+# -----------------------------------------------------------------------------
+plugins:
+  # Expõe métricas do próprio Gateway para o Prometheus (latência, status, upstream)
+  - name: prometheus
+    config:
+      status_code_metrics: true
+      latency_metrics: true
+      upstream_health_metrics: true
+      bandwidth_metrics: true
+
+  # Proteção contra abuso
+  - name: rate-limiting
+    config:
+      minute: 120
+      policy: local
+      fault_tolerant: true
+      hide_client_headers: false
+
+  # CORS para consumo por front-ends
+  - name: cors
+    config:
+      origins: ["*"]
+      methods: [GET, POST, PUT, DELETE, PATCH, OPTIONS]
+      headers: [Accept, Authorization, Content-Type, Origin]
+      credentials: true
+      max_age: 3600
+
+  # Correlaciona requisições entre serviços (útil para rastreabilidade)
+  - name: correlation-id
+    config:
+      header_name: X-Correlation-ID
+      generator: uuid
+      echo_downstream: true

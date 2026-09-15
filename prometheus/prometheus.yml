@@ -1,0 +1,44 @@
+# =============================================================================
+# Prometheus — coleta de métricas dos microsserviços e do API Gateway
+# =============================================================================
+global:
+  scrape_interval: 10s
+  evaluation_interval: 15s
+  external_labels:
+    environment: fcg-fase3
+
+scrape_configs:
+  # ------------------------------------------------------- Microsserviços ---
+  - job_name: users-api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["users-api:8080"]
+        labels:
+          service: users-api
+
+  - job_name: catalog-api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["catalog-api:8080"]
+        labels:
+          service: catalog-api
+
+  - job_name: payments-api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["payments-api:8080"]
+        labels:
+          service: payments-api
+
+  # -------------------------------------------------------- API Gateway ----
+  - job_name: kong
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["kong:8001"]
+        labels:
+          service: kong-gateway
+
+  # ------------------------------------------------ O próprio Prometheus ---
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
