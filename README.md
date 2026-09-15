@@ -43,11 +43,22 @@ Guia central da **FIAP Cloud Games**. Este repositório contém a infraestrutura
 
 | Repositório | Conteúdo |
 |---|---|
-| [`fcg-users-api`](../fcg-users-api) | Microsserviço de Usuários — cadastro, JWT, autorização |
-| [`fcg-catalog-api`](../fcg-catalog-api) | Microsserviço de Catálogo — CRUD de jogos, MongoDB, Redis, início da compra |
-| [`fcg-payments-api`](../fcg-payments-api) | Microsserviço de Pagamentos — processa e publica resultado |
-| [`fcg-notifications-function`](../fcg-notifications-function) | **Função Serverless** de Notificações (Azure Function) |
+| [`fcg-users-api`](https://github.com/ValdemirPinheiro/fcg-users-api) | Microsserviço de Usuários — cadastro, JWT, autorização |
+| [`fcg-catalog-api`](https://github.com/ValdemirPinheiro/fcg-catalog-api) | Microsserviço de Catálogo — CRUD de jogos, MongoDB, Redis, início da compra |
+| [`fcg-payments-api`](https://github.com/ValdemirPinheiro/fcg-payments-api) | Microsserviço de Pagamentos — processa e publica resultado |
+| [`fcg-notifications-function`](https://github.com/ValdemirPinheiro/fcg-notifications-function) | **Função Serverless** de Notificações (Azure Function) |
 | `fcg-orchestration` *(este)* | Gateway, docker-compose, manifestos K8s, observabilidade |
+
+> **Para clonar tudo:** os cinco repositórios devem ficar lado a lado na mesma pasta-mãe — o `docker-compose.yml` e os scripts de deploy usam caminhos relativos (`../fcg-users-api`).
+>
+> ```bash
+> mkdir FCG-Fase3 && cd FCG-Fase3
+> git clone https://github.com/ValdemirPinheiro/fcg-users-api.git
+> git clone https://github.com/ValdemirPinheiro/fcg-catalog-api.git
+> git clone https://github.com/ValdemirPinheiro/fcg-payments-api.git
+> git clone https://github.com/ValdemirPinheiro/fcg-notifications-function.git
+> git clone https://github.com/ValdemirPinheiro/fcg-orchestration.git
+> ```
 
 ---
 

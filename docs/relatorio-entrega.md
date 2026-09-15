@@ -20,17 +20,17 @@
 
 | Repositório | Finalidade | URL |
 |---|---|---|
-| `fcg-users-api` | Microsserviço de Usuários (cadastro, JWT, autorização) | `<PREENCHER>` |
-| `fcg-catalog-api` | Microsserviço de Catálogo (jogos, MongoDB, Redis, compra) | `<PREENCHER>` |
-| `fcg-payments-api` | Microsserviço de Pagamentos (processamento assíncrono) | `<PREENCHER>` |
-| `fcg-notifications-function` | **Função Serverless** de Notificações (Azure Function) | `<PREENCHER>` |
-| `fcg-orchestration` | Gateway, Docker Compose, Kubernetes, Observabilidade | `<PREENCHER>` |
+| `fcg-users-api` | Microsserviço de Usuários (cadastro, JWT, autorização) | <https://github.com/ValdemirPinheiro/fcg-users-api> |
+| `fcg-catalog-api` | Microsserviço de Catálogo (jogos, MongoDB, Redis, compra) | <https://github.com/ValdemirPinheiro/fcg-catalog-api> |
+| `fcg-payments-api` | Microsserviço de Pagamentos (processamento assíncrono) | <https://github.com/ValdemirPinheiro/fcg-payments-api> |
+| `fcg-notifications-function` | **Função Serverless** de Notificações (Azure Function) | <https://github.com/ValdemirPinheiro/fcg-notifications-function> |
+| `fcg-orchestration` | Gateway, Docker Compose, Kubernetes, Observabilidade | <https://github.com/ValdemirPinheiro/fcg-orchestration> |
 
 ## 4. Link da documentação
 
 O **README.md do repositório de orquestração** (`fcg-orchestration`) é o guia central, conforme exigido pela PDF: contém a arquitetura, a stack de observabilidade escolhida e as instruções completas de execução via Docker e Kubernetes.
 
-- Documentação central: `<PREENCHER — URL do README de fcg-orchestration>`
+- Documentação central: <https://github.com/ValdemirPinheiro/fcg-orchestration/blob/main/README.md>
 
 ## 5. Link do vídeo
 
